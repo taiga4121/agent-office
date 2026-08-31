@@ -1,0 +1,373 @@
+[
+  {
+    "id": "agent-office",
+    "name": "agent-office",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "agent-office-main-agent",
+      "name": "agent-office Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "e2e-spec-writer",
+        "name": "e2e-spec-writer",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      },
+      {
+        "id": "integration-test-runner",
+        "name": "integration-test-runner",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      },
+      {
+        "id": "integration-test-writer",
+        "name": "integration-test-writer",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      },
+      {
+        "id": "unit-test-runner",
+        "name": "unit-test-runner",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      },
+      {
+        "id": "unit-test-writer",
+        "name": "unit-test-writer",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      }
+    ]
+  },
+  {
+    "id": "agents-demo",
+    "name": "agents-demo",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "agents-demo-main-agent",
+      "name": "agents-demo Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "agents-demo-sub-agent",
+        "name": "agents-demo Sub Agent",
+        "role": "Sub Agent",
+        "status": "idle",
+        "activity": "Waiting for assignment"
+      }
+    ]
+  },
+  {
+    "id": "antigravity-demo",
+    "name": "antigravity-demo",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "antigravity-demo-main-agent",
+      "name": "antigravity-demo Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "antigravity-demo-sub-agent",
+        "name": "antigravity-demo Sub Agent",
+        "role": "Sub Agent",
+        "status": "idle",
+        "activity": "Waiting for assignment"
+      }
+    ]
+  },
+  {
+    "id": "dash",
+    "name": "dash",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "dash-main-agent",
+      "name": "dash Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "e2e-spec-writer",
+        "name": "e2e-spec-writer",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      },
+      {
+        "id": "integration-test-runner",
+        "name": "integration-test-runner",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      },
+      {
+        "id": "integration-test-writer",
+        "name": "integration-test-writer",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      },
+      {
+        "id": "unit-test-runner",
+        "name": "unit-test-runner",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      },
+      {
+        "id": "unit-test-writer",
+        "name": "unit-test-writer",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      }
+    ]
+  },
+  {
+    "id": "docker-demo",
+    "name": "docker-demo",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "docker-demo-main-agent",
+      "name": "docker-demo Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "docker-demo-sub-agent",
+        "name": "docker-demo Sub Agent",
+        "role": "Sub Agent",
+        "status": "idle",
+        "activity": "Waiting for assignment"
+      }
+    ]
+  },
+  {
+    "id": "fastapi-demo",
+    "name": "fastapi-demo",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "fastapi-demo-main-agent",
+      "name": "fastapi-demo Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "fastapi-demo-sub-agent",
+        "name": "fastapi-demo Sub Agent",
+        "role": "Sub Agent",
+        "status": "idle",
+        "activity": "Waiting for assignment"
+      }
+    ]
+  },
+  {
+    "id": "fx-demo",
+    "name": "fx-demo",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "fx-demo-main-agent",
+      "name": "fx-demo Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "fx-demo-sub-agent",
+        "name": "fx-demo Sub Agent",
+        "role": "Sub Agent",
+        "status": "idle",
+        "activity": "Waiting for assignment"
+      }
+    ]
+  },
+  {
+    "id": "kabuport",
+    "name": "kabuport",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "kabuport-main-agent",
+      "name": "kabuport Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "unit-test-runner",
+        "name": "unit-test-runner",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      },
+      {
+        "id": "unit-test-writer",
+        "name": "unit-test-writer",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      }
+    ]
+  },
+  {
+    "id": "niwabon",
+    "name": "niwabon",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "niwabon-main-agent",
+      "name": "niwabon Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "niwabon-sub-agent",
+        "name": "niwabon Sub Agent",
+        "role": "Sub Agent",
+        "status": "idle",
+        "activity": "Waiting for assignment"
+      }
+    ]
+  },
+  {
+    "id": "sodateji",
+    "name": "sodateji",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "sodateji-main-agent",
+      "name": "sodateji Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "architecture-reviewer",
+        "name": "architecture-reviewer",
+        "role": "Agent",
+        "status": "idle",
+        "activity": "Ready for task"
+      }
+    ]
+  },
+  {
+    "id": "stock-agent-system",
+    "name": "stock-agent-system",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "stock-agent-system-main-agent",
+      "name": "stock-agent-system Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "stock-agent-system-sub-agent",
+        "name": "stock-agent-system Sub Agent",
+        "role": "Sub Agent",
+        "status": "idle",
+        "activity": "Waiting for assignment"
+      }
+    ]
+  },
+  {
+    "id": "video-demo",
+    "name": "video-demo",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "video-demo-main-agent",
+      "name": "video-demo Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "video-demo-sub-agent",
+        "name": "video-demo Sub Agent",
+        "role": "Sub Agent",
+        "status": "idle",
+        "activity": "Waiting for assignment"
+      }
+    ]
+  },
+  {
+    "id": "project-3qtf",
+    "name": "ダッシュボードアプリ",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "project-3qtf-main-agent",
+      "name": "ダッシュボードアプリ Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "project-3qtf-sub-agent",
+        "name": "ダッシュボードアプリ Sub Agent",
+        "role": "Sub Agent",
+        "status": "idle",
+        "activity": "Waiting for assignment"
+      }
+    ]
+  },
+  {
+    "id": "project-4x4n",
+    "name": "結婚式プロフィールムービー",
+    "icon": "🏢",
+    "visible": true,
+    "mainAgent": {
+      "id": "project-4x4n-main-agent",
+      "name": "結婚式プロフィールムービー Main Agent",
+      "role": "Main Agent",
+      "status": "idle",
+      "activity": "Ready for task"
+    },
+    "subAgents": [
+      {
+        "id": "project-4x4n-sub-agent",
+        "name": "結婚式プロフィールムービー Sub Agent",
+        "role": "Sub Agent",
+        "status": "idle",
+        "activity": "Waiting for assignment"
+      }
+    ]
+  }
+]

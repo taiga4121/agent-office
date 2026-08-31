@@ -1,0 +1,48 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit*)",
+            "command": "if [ -f .claude/.unit-tests-verified ]; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}'; else echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"コミット前に unit-test-writer と unit-test-runner サブエージェントを実行してください。unit-test-runner がテスト成功で完了すると自動的にこのブロックは解除されます。\"}}'; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(gh pr create*)",
+            "command": "if [ -f .claude/.integration-tests-verified ] && [ -f .claude/.e2e-spec-verified ]; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}'; else echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"PR作成前に integration-test-writer/integration-test-runner と e2e-spec-writer サブエージェントを実行してください(対象が無ければテスト0件・仕様書なしの判断で構いません)。両方が完了すると自動的にこのブロックは解除されます。\"}}'; fi"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit*)",
+            "command": "rm -f .claude/.unit-tests-verified"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(gh pr create*)",
+            "command": "rm -f .claude/.integration-tests-verified .claude/.e2e-spec-verified"
+          }
+        ]
+      }
+    ]
+  }
+}
