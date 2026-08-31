@@ -1,7 +1,7 @@
 const statusIcons = {
-  idle: "☕",
+  idle: "🧑‍💼",
   working: "💻",
-  waiting: "⏳",
+  waiting: "🧑‍💻",
   error: "⚠️"
 };
 
@@ -15,6 +15,8 @@ const statusLabels = {
 const projectVisibilityStorageKey = "agent-office-project-visibility";
 let projects = [];
 let showProjectList = false;
+let activeProjectId = null;
+let chatMessagesByProject = {};
 
 async function loadProjects() {
   try {
@@ -133,28 +135,50 @@ function renderAgent(agent, isMain = false) {
 function renderProject(project) {
   const mainAgent = project.mainAgent || { id: "main-agent", name: "Main Agent", role: "Main Agent", status: "idle", activity: "Ready for task" };
   const subAgents = project.subAgents || [];
+  const topAgents = [subAgents[0], subAgents[1]].filter(Boolean);
+  const lowerAgents = [subAgents[2] || subAgents[0] || mainAgent].filter(Boolean);
+
+  const roomAgents = [
+    { agent: topAgents[0] || mainAgent, x: 18, y: 52, role: "left" },
+    { agent: topAgents[1] || subAgents[0] || mainAgent, x: 58, y: 52, role: "right" },
+    { agent: lowerAgents[0] || mainAgent, x: 50, y: 74, role: "center" }
+  ];
+
+  const renderWorldAgent = ({ agent, x, y, role }) => `
+    <div class="world-object world-agent world-agent--${role}" data-status="${agent.status}" style="left:${x}%; top:${y}%">
+      <div class="desk-unit" aria-hidden="true">
+        <span class="desk-surface">💻</span>
+      </div>
+      <div class="agent-avatar-world">${statusIcons[agent.status]}</div>
+      <div class="agent-tag">
+        <span>${agent.name}</span>
+        <small>${statusLabels[agent.status]}</small>
+      </div>
+    </div>
+  `;
+
+  const isSelected = activeProjectId === project.id;
 
   return `
-    <section class="project-room" aria-label="${project.name} project room">
-      <div class="room-header">
-        <h2>${project.icon} ${project.name}</h2>
-        <div class="room-controls">
-          <label class="visibility-toggle">
-            <input type="checkbox" data-project-id="${project.id}" ${project.visible !== false ? "checked" : ""}>
-            <span>${project.visible !== false ? "表示" : "非表示"}</span>
-          </label>
-          <span class="room-icon" aria-hidden="true">🗂️</span>
+    <section class="project-room ${isSelected ? "is-selected" : ""}" data-project-id="${project.id}" aria-label="${project.name} project room">
+      <div class="room-header is-visible">
+        <div class="room-title-wrap">
+          <span class="room-title-icon">💻</span>
+          <h2>${project.name}</h2>
         </div>
       </div>
-      <div class="agent-grid">
-        ${renderAgent(mainAgent, true)}
-        ${subAgents.map((agent) => renderAgent(agent, false)).join("")}
-      </div>
 
-      <div class="project-command-panel" data-project-id="${project.id}">
-        <label class="project-command-label" for="task-input-${project.id}">${project.name} のメインエージェントに指示</label>
-        <textarea id="task-input-${project.id}" rows="2" placeholder="${project.name} に指示を入力... 例: ログイン機能を実装して"></textarea>
-        <button type="button" data-project-id="${project.id}" data-agent-id="${mainAgent.id}" class="project-send-task">送信</button>
+      <div class="room-world" aria-label="${project.name} room world">
+        <div class="room-wall" aria-hidden="true"></div>
+        <div class="room-floor" aria-hidden="true">
+          <div class="furniture-layer">
+            <div class="furniture-item furniture-item--left">📚</div>
+            <div class="furniture-item furniture-item--right">📋</div>
+            <div class="furniture-item furniture-item--plant left">🌱</div>
+            <div class="furniture-item furniture-item--plant right">🌱</div>
+          </div>
+          ${roomAgents.map(renderWorldAgent).join("")}
+        </div>
       </div>
     </section>
   `;
@@ -188,15 +212,89 @@ function renderProjectListPanel() {
 
       targetProject.visible = event.target.checked;
       persistProjectVisibility();
+      if (!targetProject.visible && activeProjectId === projectId) {
+        activeProjectId = projects.find((project) => project.visible !== false)?.id || null;
+      }
       render();
       renderProjectListPanel();
     });
   });
 }
 
+function getProjectMessages(projectId) {
+  if (!chatMessagesByProject[projectId]) {
+    const project = projects.find((item) => item.id === projectId);
+    const defaultName = project?.name || "Project";
+    chatMessagesByProject[projectId] = [
+      { role: "assistant", text: `${defaultName} の部屋が開きました。指示を入力してください。` }
+    ];
+  }
+
+  return chatMessagesByProject[projectId];
+}
+
+function renderChatPanel() {
+  const panel = document.getElementById("chat-panel");
+  if (!panel) return;
+
+  const selectedProject = projects.find((project) => project.id === activeProjectId) || projects[0];
+  if (!selectedProject) {
+    panel.innerHTML = "";
+    return;
+  }
+
+  const messages = getProjectMessages(selectedProject.id);
+  const messageMarkup = messages.map((message) => `
+    <div class="chat-message ${message.role === "user" ? "is-user" : "is-assistant"}">
+      <span class="chat-bubble">${message.text}</span>
+    </div>
+  `).join("");
+
+  panel.innerHTML = `
+    <div class="chat-header">
+      <div class="chat-header-title">
+        <span class="chat-header-icon">💬</span>
+        <span>${selectedProject.name}</span>
+      </div>
+    </div>
+    <div class="chat-body">
+      ${messageMarkup}
+    </div>
+    <div class="chat-composer">
+      <textarea id="chat-input" rows="3" placeholder="${selectedProject.name} に指示を入力..."></textarea>
+      <button id="chat-send-button" type="button" data-project-id="${selectedProject.id}">送信</button>
+    </div>
+  `;
+
+  const textArea = document.getElementById("chat-input");
+  const sendButton = document.getElementById("chat-send-button");
+
+  if (textArea) {
+    textArea.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        handleTaskSubmit(selectedProject.id, selectedProject.mainAgent?.id || null, textArea);
+      }
+    });
+  }
+
+  if (sendButton) {
+    sendButton.addEventListener("click", () => {
+      handleTaskSubmit(selectedProject.id, selectedProject.mainAgent?.id || null, textArea);
+    });
+  }
+}
+
 function render() {
   const app = document.getElementById("app");
   const visibleProjects = projects.filter((project) => project.visible !== false);
+
+  if (visibleProjects.length <= 1) {
+    app.className = "office-layout project-count-1";
+  } else if (visibleProjects.length <= 4) {
+    app.className = "office-layout project-count-2";
+  } else {
+    app.className = "office-layout project-count-3";
+  }
 
   if (!visibleProjects.length) {
     app.innerHTML = `
@@ -210,49 +308,30 @@ function render() {
   } else {
     app.innerHTML = visibleProjects.map(renderProject).join("");
 
-    document.querySelectorAll(".project-send-task").forEach((button) => {
-      button.addEventListener("click", () => handleTaskSubmit(button.dataset.projectId, button.dataset.agentId));
-    });
-
-    document.querySelectorAll(".project-command-panel textarea").forEach((input) => {
-      input.addEventListener("keydown", (event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-          const projectId = input.closest(".project-command-panel")?.dataset.projectId;
-          const agentId = document.querySelector(`button[data-project-id="${projectId}"]`)?.dataset.agentId;
-          handleTaskSubmit(projectId, agentId, input);
-        }
-      });
-    });
-
-    document.querySelectorAll(".visibility-toggle input").forEach((toggle) => {
-      toggle.addEventListener("change", (event) => {
-        const projectId = event.target.dataset.projectId;
-        const targetProject = projects.find((project) => project.id === projectId);
-        if (!targetProject) {
-          return;
-        }
-
-        targetProject.visible = event.target.checked;
-        persistProjectVisibility();
+    document.querySelectorAll(".project-room").forEach((room) => {
+      room.addEventListener("click", () => {
+        const projectId = room.dataset.projectId;
+        activeProjectId = projectId;
         render();
-        renderProjectListPanel();
       });
     });
   }
 
   renderProjectListPanel();
+  renderChatPanel();
 }
 
 function handleTaskSubmit(projectId = null, agentId = null, inputElement = null) {
-  const resolvedProjectId = projectId || document.querySelector(".project-command-panel")?.dataset.projectId || null;
-  const resolvedInput = inputElement || document.querySelector(`textarea#task-input-${resolvedProjectId}`);
+  const selectedProject = projects.find((project) => project.id === projectId) || projects[0];
+  const resolvedProjectId = selectedProject ? selectedProject.id : null;
+  const resolvedInput = inputElement || document.getElementById("chat-input");
 
-  if (!resolvedInput) {
+  if (!resolvedInput || !resolvedProjectId) {
     return;
   }
 
   const task = resolvedInput.value.trim();
-  if (!task || !resolvedProjectId) {
+  if (!task) {
     resolvedInput.focus();
     return;
   }
@@ -265,10 +344,14 @@ function handleTaskSubmit(projectId = null, agentId = null, inputElement = null)
     return;
   }
 
+  const currentMessages = getProjectMessages(resolvedProjectId);
+  currentMessages.push({ role: "user", text: task });
   setAgentStatus(resolvedProjectId, targetAgentId, "working", task);
   autoReset(resolvedProjectId, targetAgentId);
+  currentMessages.push({ role: "assistant", text: `${targetProject.name} に対して「${task}」を受け取りました。` });
+
+  renderChatPanel();
   resolvedInput.value = "";
-  resolvedInput.focus();
 }
 
 async function init() {
@@ -284,6 +367,7 @@ async function init() {
     }
   ];
   projects = normalizedProjects;
+  activeProjectId = projects.find((project) => project.visible !== false)?.id || null;
   persistProjectVisibility();
   render();
 }
