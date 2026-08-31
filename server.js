@@ -137,7 +137,7 @@ function runClaude(prompt, workspace = process.cwd(), projectId = null) {
     function handleStreamEvent(event) {
       if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
         for (const block of event.message.content) {
-          if (block.type === 'tool_use' && block.name === 'Task' && block.input?.subagent_type) {
+          if (block.type === 'tool_use' && (block.name === 'Task' || block.name === 'Agent') && block.input?.subagent_type) {
             pendingSubAgentCalls.set(block.id, block.input.subagent_type);
             emitSubAgentEvent(block.input.subagent_type, 'working');
           }

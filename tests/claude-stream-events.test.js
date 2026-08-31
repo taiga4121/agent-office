@@ -49,6 +49,13 @@ function taskToolUseEvent(toolUseId, subagentType) {
   };
 }
 
+function agentToolUseEvent(toolUseId, subagentType) {
+  return {
+    type: 'assistant',
+    message: { content: [{ type: 'tool_use', id: toolUseId, name: 'Agent', input: { subagent_type: subagentType } }] }
+  };
+}
+
 function toolResultEvent(toolUseId) {
   return {
     type: 'user',
@@ -80,6 +87,76 @@ test('runClaude: Task tool_useの検知でworkingイベント、対応するtool
       { projectId: 'proj-a', subAgentId: 'code-reviewer', status: 'working' },
       { projectId: 'proj-a', subAgentId: 'code-reviewer', status: 'idle' }
     ]);
+  });
+});
+
+test('runClaude: Agent tool_useの検知でworkingイベント、対応するtool_resultでidleイベントが発行される(正常系)', async (t) => {
+  await withSubAgentEventSpy(t, async (emitted) => {
+    const fakeChild = createFakeChild();
+    t.mock.method(childProcess, 'spawn', () => fakeChild);
+    const { runClaude } = requireFreshServer();
+
+    const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
+
+    writeLine(fakeChild, agentToolUseEvent('tool-1', 'code-reviewer'));
+    writeLine(fakeChild, toolResultEvent('tool-1'));
+    writeLine(fakeChild, resultEvent('最終応答です'));
+    fakeChild.emit('close', 0);
+
+    const response = await promise;
+
+    assert.equal(response, '最終応答です');
+    assert.deepEqual(emitted, [
+      { projectId: 'proj-a', subAgentId: 'code-reviewer', status: 'working' },
+      { projectId: 'proj-a', subAgentId: 'code-reviewer', status: 'idle' }
+    ]);
+  });
+});
+
+test('runClaude: TaskとAgentが混在してもそれぞれtool_use_idごとに正しく対応付ける(境界値)', async (t) => {
+  await withSubAgentEventSpy(t, async (emitted) => {
+    const fakeChild = createFakeChild();
+    t.mock.method(childProcess, 'spawn', () => fakeChild);
+    const { runClaude } = requireFreshServer();
+
+    const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
+
+    writeLine(fakeChild, taskToolUseEvent('tool-1', 'agent-a'));
+    writeLine(fakeChild, agentToolUseEvent('tool-2', 'agent-b'));
+    writeLine(fakeChild, toolResultEvent('tool-2'));
+    writeLine(fakeChild, toolResultEvent('tool-1'));
+    writeLine(fakeChild, resultEvent('応答'));
+    fakeChild.emit('close', 0);
+
+    await promise;
+
+    assert.deepEqual(emitted, [
+      { projectId: 'proj-a', subAgentId: 'agent-a', status: 'working' },
+      { projectId: 'proj-a', subAgentId: 'agent-b', status: 'working' },
+      { projectId: 'proj-a', subAgentId: 'agent-b', status: 'idle' },
+      { projectId: 'proj-a', subAgentId: 'agent-a', status: 'idle' }
+    ]);
+  });
+});
+
+test('runClaude: Agent tool_useでもsubagent_typeが無い場合はサブエージェントイベントを発行しない(境界値)', async (t) => {
+  await withSubAgentEventSpy(t, async (emitted) => {
+    const fakeChild = createFakeChild();
+    t.mock.method(childProcess, 'spawn', () => fakeChild);
+    const { runClaude } = requireFreshServer();
+
+    const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
+
+    writeLine(fakeChild, {
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'Agent', input: {} }] }
+    });
+    writeLine(fakeChild, resultEvent('応答'));
+    fakeChild.emit('close', 0);
+
+    await promise;
+
+    assert.deepEqual(emitted, []);
   });
 });
 
