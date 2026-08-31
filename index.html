@@ -21,7 +21,10 @@
 
       <section id="project-list-panel" class="project-list-panel hidden" aria-label="Project visibility list"></section>
 
-      <main id="app" class="office-layout"></main>
+      <main class="workspace-layout">
+        <div id="app" class="office-layout" aria-live="polite"></div>
+        <aside id="chat-panel" class="chat-panel" aria-label="Project chat panel"></aside>
+      </main>
     </div>
 
     <script type="module" src="./app.js"></script>
