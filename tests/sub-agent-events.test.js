@@ -182,3 +182,75 @@ test('EventSourceが利用できない環境ではsubscribeToSubAgentEventsは�
   assert.equal(MockEventSource.instances.length, 0);
   assert.ok(document.querySelector('.project-room[data-project-id="proj-a"]'), 'EventSource非対応でも通常の描画は行われる');
 });
+
+test('SSEでworkingイベントを受信すると、data-statusだけでなくアイコン・ラベル表示も更新される(正常系)', async () => {
+  const document = await setupApp();
+  const eventSource = getLatestEventSource();
+
+  const before = findWorldAgentByName(document, 'proj-a', 'Sub One');
+  assert.equal(before.querySelector('.agent-avatar-world').textContent, '🧑‍💼', 'idle状態のアイコンが表示されている');
+  assert.equal(before.querySelector('.agent-tag small').textContent, 'Idle', 'idle状態のラベルが表示されている');
+
+  eventSource.onmessage({
+    data: JSON.stringify({ projectId: 'proj-a', subAgentId: 'agent-sub-1', status: 'working' })
+  });
+
+  const after = findWorldAgentByName(document, 'proj-a', 'Sub One');
+  assert.equal(after.querySelector('.agent-avatar-world').textContent, '💻', 'working状態のアイコンに更新される');
+  assert.equal(after.querySelector('.agent-tag small').textContent, 'Working', 'working状態のラベルに更新される');
+});
+
+test('working→idle→workingと連続してイベントを受信しても、最終的な状態が正しく反映される(正常系)', async () => {
+  const document = await setupApp();
+  const eventSource = getLatestEventSource();
+
+  eventSource.onmessage({ data: JSON.stringify({ projectId: 'proj-a', subAgentId: 'agent-sub-1', status: 'working' }) });
+  eventSource.onmessage({ data: JSON.stringify({ projectId: 'proj-a', subAgentId: 'agent-sub-1', status: 'idle' }) });
+  eventSource.onmessage({ data: JSON.stringify({ projectId: 'proj-a', subAgentId: 'agent-sub-1', status: 'working' }) });
+
+  assert.equal(
+    findWorldAgentByName(document, 'proj-a', 'Sub One').dataset.status,
+    'working',
+    '連続イベントの最後の状態がworkingとして反映される'
+  );
+});
+
+test('同じsubAgentIdを持つサブエージェントが複数プロジェクトに存在しても、イベント対象のprojectIdに属するエージェントだけが更新される(境界値)', async () => {
+  const projectA = projectWithSubAgent();
+  const projectB = {
+    id: 'proj-b',
+    name: 'プロジェクトB',
+    icon: '🏢',
+    visible: true,
+    mainAgent: { id: 'agent-main-b', name: 'Dev B', role: 'Developer', status: 'idle', activity: 'Ready' },
+    // proj-aと同一のsubAgentId('agent-sub-1')を持つエージェントを別プロジェクトに配置する
+    subAgents: [
+      { id: 'agent-sub-1', name: 'Sub One (B)', role: 'Researcher', status: 'idle', activity: 'Ready' }
+    ]
+  };
+
+  const document = await setupApp({ projects: [projectA, projectB] });
+  const eventSource = getLatestEventSource();
+
+  eventSource.onmessage({
+    data: JSON.stringify({ projectId: 'proj-a', subAgentId: 'agent-sub-1', status: 'working' })
+  });
+
+  assert.equal(
+    findWorldAgentByName(document, 'proj-a', 'Sub One').dataset.status,
+    'working',
+    'イベントで指定されたproj-a側のエージェントは更新される'
+  );
+  assert.equal(
+    findWorldAgentByName(document, 'proj-b', 'Sub One (B)').dataset.status,
+    'idle',
+    '同名のsubAgentIdを持つ別プロジェクト(proj-b)のエージェントは影響を受けない'
+  );
+});
+
+test('subscribeToSubAgentEventsはhttp://localhost:3001/api/eventsをEventSourceで購読する(回帰)', async () => {
+  await setupApp();
+  const eventSource = getLatestEventSource();
+
+  assert.equal(eventSource.url, 'http://localhost:3001/api/events');
+});
