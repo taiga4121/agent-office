@@ -10,6 +10,7 @@
     "preview": "npm run generate-projects && vite preview --host 0.0.0.0 --port 4173"
   },
   "devDependencies": {
+    "jsdom": "^29.1.1",
     "vite": "^5.4.10"
   }
 }
