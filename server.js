@@ -1,7 +1,38 @@
 const http = require('node:http');
+const path = require('node:path');
+const fs = require('node:fs');
 const { spawn } = require('node:child_process');
+const { EventEmitter } = require('node:events');
 
 const PORT = Number(process.env.PORT || 3001);
+
+// サブエージェント(Task tool呼び出し)の開始/終了イベントをSSE購読者へ配信する。
+const subAgentEvents = new EventEmitter();
+subAgentEvents.setMaxListeners(100);
+
+function resolveWorkspace(projectId) {
+  const fallback = process.cwd();
+  if (!projectId || typeof projectId !== 'string') {
+    return fallback;
+  }
+
+  const parentDir = path.resolve(__dirname, '..');
+  const candidate = path.resolve(parentDir, projectId);
+
+  if (candidate !== parentDir && !candidate.startsWith(parentDir + path.sep)) {
+    return fallback;
+  }
+
+  try {
+    if (fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  } catch (error) {
+    // ディレクトリが存在しない場合は agent-office 自身にフォールバック
+  }
+
+  return fallback;
+}
 
 function detectClaudeExecutable() {
   const override = process.env.CLAUDE_COMMAND?.trim();
@@ -63,9 +94,8 @@ function buildClaudeConversationPrompt(history, newMessage, activeSessionId = nu
   return prompt;
 }
 
-function buildClaudeCommand(prompt) {
+function buildClaudeCommand(prompt, workspace = process.cwd()) {
   const executable = detectClaudeExecutable();
-  const workspace = process.cwd();
 
   return {
     executable,
@@ -75,16 +105,18 @@ function buildClaudeCommand(prompt) {
       '--dangerously-skip-permissions',
       '--permission-mode',
       'bypassPermissions',
+      '--output-format',
+      'stream-json',
+      '--verbose',
       '-p',
       String(prompt)
     ]
   };
 }
 
-function runClaude(prompt) {
+function runClaude(prompt, workspace = process.cwd(), projectId = null) {
   return new Promise((resolve, reject) => {
-    const workspace = process.cwd();
-    const command = buildClaudeCommand(prompt);
+    const command = buildClaudeCommand(prompt, workspace);
 
     const child = spawn(command.executable, command.args, {
       cwd: workspace,
@@ -92,11 +124,56 @@ function runClaude(prompt) {
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
-    let stdout = '';
+    let lineBuffer = '';
     let stderr = '';
+    let finalResponse = null;
+    const pendingSubAgentCalls = new Map();
+
+    function emitSubAgentEvent(subAgentId, status) {
+      if (!projectId || !subAgentId) return;
+      subAgentEvents.emit('event', { projectId, subAgentId, status });
+    }
+
+    function handleStreamEvent(event) {
+      if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+        for (const block of event.message.content) {
+          if (block.type === 'tool_use' && block.name === 'Task' && block.input?.subagent_type) {
+            pendingSubAgentCalls.set(block.id, block.input.subagent_type);
+            emitSubAgentEvent(block.input.subagent_type, 'working');
+          }
+        }
+      }
+
+      if (event.type === 'user' && Array.isArray(event.message?.content)) {
+        for (const block of event.message.content) {
+          if (block.type === 'tool_result' && pendingSubAgentCalls.has(block.tool_use_id)) {
+            const subAgentId = pendingSubAgentCalls.get(block.tool_use_id);
+            pendingSubAgentCalls.delete(block.tool_use_id);
+            emitSubAgentEvent(subAgentId, 'idle');
+          }
+        }
+      }
+
+      if (event.type === 'result' && typeof event.result === 'string') {
+        finalResponse = event.result;
+      }
+    }
 
     child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
+      lineBuffer += chunk.toString();
+      const lines = lineBuffer.split('\n');
+      lineBuffer = lines.pop();
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        try {
+          handleStreamEvent(JSON.parse(trimmed));
+        } catch (error) {
+          // stream-jsonの1行がJSONとしてパースできない場合は無視する
+        }
+      }
     });
 
     child.stderr.on('data', (chunk) => {
@@ -108,8 +185,13 @@ function runClaude(prompt) {
     });
 
     child.on('close', (code) => {
+      // 終了確認イベントが来なかったサブエージェント呼び出しはworking表示のまま固定されないようここで戻す
+      for (const subAgentId of pendingSubAgentCalls.values()) {
+        emitSubAgentEvent(subAgentId, 'idle');
+      }
+
       if (code === 0) {
-        resolve(stdout.trim() || 'Claude Code が空の応答を返しました。');
+        resolve((finalResponse || '').trim() || 'Claude Code が空の応答を返しました。');
         return;
       }
 
@@ -136,6 +218,25 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && req.url === '/api/events') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive'
+    });
+    res.write('\n');
+
+    const listener = (payload) => {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+    subAgentEvents.on('event', listener);
+
+    req.on('close', () => {
+      subAgentEvents.off('event', listener);
+    });
+    return;
+  }
+
   if (req.method !== 'POST' || req.url !== '/api/chat') {
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ ok: false, error: 'Not found' }));
@@ -156,8 +257,10 @@ const server = http.createServer((req, res) => {
       const promptText = typeof requestBody.message === 'string' ? requestBody.message.trim() : '';
       const history = Array.isArray(requestBody.history) ? requestBody.history : [];
       const activeSessionId = typeof requestBody.sessionId === 'string' ? requestBody.sessionId : null;
+      const projectId = typeof requestBody.projectId === 'string' ? requestBody.projectId : null;
+      const workspace = resolveWorkspace(projectId);
 
-      console.log(`[${new Date().toISOString()}] Request parsed: message length=${promptText.length}, history size=${history.length}, sessionId=${activeSessionId}`);
+      console.log(`[${new Date().toISOString()}] Request parsed: message length=${promptText.length}, history size=${history.length}, sessionId=${activeSessionId}, projectId=${projectId}, workspace=${workspace}`);
 
       if (!promptText) {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -167,8 +270,8 @@ const server = http.createServer((req, res) => {
 
       const prompt = buildClaudeConversationPrompt(history, promptText, activeSessionId);
       console.log(`[${new Date().toISOString()}] Calling Claude with prompt (${prompt.length} chars)`);
-      
-      const response = await runClaude(prompt);
+
+      const response = await runClaude(prompt, workspace, projectId);
       console.log(`[${new Date().toISOString()}] Claude responded (${response.length} chars)`);
       
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -195,5 +298,6 @@ module.exports = {
   detectClaudeExecutable,
   runClaude,
   buildClaudeConversationPrompt,
-  buildClaudeCommand
+  buildClaudeCommand,
+  resolveWorkspace
 };
