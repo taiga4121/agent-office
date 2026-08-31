@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "scripts": {
     "generate-projects": "node scripts/generate-projects.mjs",
-    "dev": "npm run generate-projects && vite --host 0.0.0.0 --port 4173",
+    "server": "node server.js",
+    "dev": "npm run generate-projects && (node server.js > /tmp/agent-office-claude-server.log 2>&1 &) && vite --host 0.0.0.0 --port 4173",
     "build": "npm run generate-projects && vite build",
     "preview": "npm run generate-projects && vite preview --host 0.0.0.0 --port 4173"
   },

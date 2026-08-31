@@ -13,10 +13,50 @@ const statusLabels = {
 };
 
 const projectVisibilityStorageKey = "agent-office-project-visibility";
+const chatHistoryStorageKey = "agent-office-chat-history";
+const debugLogsStorageKey = "agent-office-debug-logs";
+
+// Debug log buffer to capture logs across reloads
+let debugLogs = [];
+function addDebugLog(level, message, data) {
+  const timestamp = new Date().toISOString();
+  const logEntry = { timestamp, level, message, data };
+  debugLogs.push(logEntry);
+  
+  // Keep only last 100 logs to avoid bloating memory
+  if (debugLogs.length > 100) {
+    debugLogs.shift();
+  }
+  
+  // Also save to sessionStorage for persistence across reloads
+  try {
+    sessionStorage.setItem(debugLogsStorageKey, JSON.stringify(debugLogs));
+  } catch (e) {
+    // sessionStorage might be full, ignore
+  }
+  
+  // Also log to console
+  console.log(`[${level}] ${message}`, data || "");
+}
+
+// Load debug logs from sessionStorage if available
+try {
+  const stored = sessionStorage.getItem(debugLogsStorageKey);
+  if (stored) {
+    debugLogs = JSON.parse(stored);
+  }
+} catch (e) {
+  // Ignore parse errors
+}
+
 let projects = [];
 let showProjectList = false;
 let activeProjectId = null;
+let activeSessionByProject = {};
 let chatMessagesByProject = {};
+let pendingPermission = null;
+
+let historyOpenForProject = null;
 
 async function loadProjects() {
   try {
@@ -133,16 +173,28 @@ function renderAgent(agent, isMain = false) {
 }
 
 function renderProject(project) {
-  const mainAgent = project.mainAgent || { id: "main-agent", name: "Main Agent", role: "Main Agent", status: "idle", activity: "Ready for task" };
-  const subAgents = project.subAgents || [];
-  const topAgents = [subAgents[0], subAgents[1]].filter(Boolean);
-  const lowerAgents = [subAgents[2] || subAgents[0] || mainAgent].filter(Boolean);
+  const mainAgent = project.mainAgent || { id: "main-agent", name: `${project.name}マネージャー`, role: "Main Agent", status: "idle", activity: "Ready for task" };
+  const subAgents = Array.isArray(project.subAgents) ? project.subAgents : [];
+  const allAgents = [mainAgent, ...subAgents];
 
-  const roomAgents = [
-    { agent: topAgents[0] || mainAgent, x: 18, y: 52, role: "left" },
-    { agent: topAgents[1] || subAgents[0] || mainAgent, x: 58, y: 52, role: "right" },
-    { agent: lowerAgents[0] || mainAgent, x: 50, y: 74, role: "center" }
+  const positions = [
+    { x: 18, y: 42, role: "left" },
+    { x: 50, y: 42, role: "center" },
+    { x: 82, y: 42, role: "right" },
+    { x: 28, y: 70, role: "left" },
+    { x: 50, y: 70, role: "center" },
+    { x: 72, y: 70, role: "right" },
+    { x: 18, y: 86, role: "left" },
+    { x: 50, y: 86, role: "center" },
+    { x: 82, y: 86, role: "right" }
   ];
+
+  const roomAgents = allAgents.slice(0, positions.length).map((agent, index) => ({
+    agent,
+    x: positions[index].x,
+    y: positions[index].y,
+    role: positions[index].role
+  }));
 
   const renderWorldAgent = ({ agent, x, y, role }) => `
     <div class="world-object world-agent world-agent--${role}" data-status="${agent.status}" style="left:${x}%; top:${y}%">
@@ -221,16 +273,111 @@ function renderProjectListPanel() {
   });
 }
 
-function getProjectMessages(projectId) {
-  if (!chatMessagesByProject[projectId]) {
-    const project = projects.find((item) => item.id === projectId);
-    const defaultName = project?.name || "Project";
-    chatMessagesByProject[projectId] = [
-      { role: "assistant", text: `${defaultName} の部屋が開きました。指示を入力してください。` }
-    ];
+function persistChatMessages() {
+  localStorage.setItem(chatHistoryStorageKey, JSON.stringify(chatMessagesByProject));
+}
+
+function loadStoredChatMessages() {
+  try {
+    const raw = localStorage.getItem(chatHistoryStorageKey);
+    if (!raw) {
+      return {};
+    }
+
+    const stored = JSON.parse(raw);
+    return stored && typeof stored === "object" ? stored : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function createSessionId(projectId) {
+  return `${projectId}-session-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function getProjectSessionIds(projectId) {
+  const projectMessages = Array.isArray(chatMessagesByProject[projectId]) ? chatMessagesByProject[projectId] : [];
+  const sessionIds = new Set(projectMessages
+    .map((message) => message?.sessionId)
+    .filter((sessionId) => typeof sessionId === "string" && sessionId.length > 0));
+
+  const activeSessionId = activeSessionByProject[projectId];
+  if (typeof activeSessionId === "string" && activeSessionId.length > 0) {
+    sessionIds.add(activeSessionId);
   }
 
-  return chatMessagesByProject[projectId];
+  if (sessionIds.size) {
+    return [...sessionIds];
+  }
+
+  const fallbackSessionId = createSessionId(projectId);
+  chatMessagesByProject[projectId] = [];
+  activeSessionByProject[projectId] = fallbackSessionId;
+  return [fallbackSessionId];
+}
+
+function getActiveSessionId(projectId) {
+  const sessionIds = getProjectSessionIds(projectId);
+  if (!activeSessionByProject[projectId] || !sessionIds.includes(activeSessionByProject[projectId])) {
+    activeSessionByProject[projectId] = sessionIds[0];
+  }
+  return activeSessionByProject[projectId];
+}
+
+function setActiveSessionId(projectId, sessionId) {
+  const sessionIds = getProjectSessionIds(projectId);
+  if (!sessionIds.includes(sessionId)) {
+    return;
+  }
+
+  activeSessionByProject[projectId] = sessionId;
+  renderChatPanel();
+}
+
+function createNewSession(projectId) {
+  const nextSessionId = createSessionId(projectId);
+  activeSessionByProject[projectId] = nextSessionId;
+  return nextSessionId;
+}
+
+function getProjectMessages(projectId, sessionId = null) {
+  const activeSessionId = sessionId || getActiveSessionId(projectId);
+  const projectMessages = Array.isArray(chatMessagesByProject[projectId]) ? chatMessagesByProject[projectId] : [];
+  const hasSessionScopedMessages = projectMessages.some((message) => typeof message?.sessionId === "string" && message.sessionId.length > 0);
+
+  return projectMessages.filter((message) => {
+    if (!message || typeof message.text !== "string") {
+      return false;
+    }
+
+    if (message.sessionId === activeSessionId) {
+      return true;
+    }
+
+    if (!message.sessionId) {
+      return true;
+    }
+
+    return !hasSessionScopedMessages;
+  });
+}
+
+function appendProjectMessage(projectId, message) {
+  if (!chatMessagesByProject[projectId]) {
+    chatMessagesByProject[projectId] = [];
+  }
+
+  chatMessagesByProject[projectId].push(message);
+  persistChatMessages();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function renderChatPanel() {
@@ -243,12 +390,53 @@ function renderChatPanel() {
     return;
   }
 
-  const messages = getProjectMessages(selectedProject.id);
-  const messageMarkup = messages.map((message) => `
-    <div class="chat-message ${message.role === "user" ? "is-user" : "is-assistant"}">
-      <span class="chat-bubble">${message.text}</span>
-    </div>
+  const activeSessionId = getActiveSessionId(selectedProject.id);
+  const messages = getProjectMessages(selectedProject.id, activeSessionId);
+  const isHistoryOpen = historyOpenForProject === selectedProject.id;
+  const historyItems = getProjectSessionIds(selectedProject.id).map((sessionId) => `
+    <button
+      type="button"
+      class="chat-history-item ${sessionId === activeSessionId ? "is-active" : ""}"
+      data-session-id="${sessionId}"
+      aria-pressed="${sessionId === activeSessionId}"
+    >
+      ${sessionId === activeSessionId ? "現在の会話" : `会話 ${sessionId.slice(-2)}`}
+    </button>
   `).join("");
+  const messageMarkup = messages.length ? messages.map((message) => `
+    <div class="chat-message ${message.role === "user" ? "is-user" : "is-assistant"}">
+      <span class="chat-bubble">${escapeHtml(message.text)}</span>
+    </div>
+  `).join("") : `
+    <div class="chat-empty-state">履歴なし</div>
+  `;
+
+  const thinkingIndicator = window.__agentOfficeThinkingForProject === selectedProject.id ? `
+    <div class="chat-message is-assistant is-thinking">
+      <span class="chat-bubble chat-bubble--thinking">
+        <span class="thinking-dots" aria-label="考え中"><span></span><span></span><span></span></span>
+        Claude Code が考えています...
+      </span>
+    </div>
+  ` : "";
+
+  const permissionDialog = pendingPermission && pendingPermission.projectId === selectedProject.id ? `
+    <div class="permission-dialog" role="dialog" aria-modal="true" aria-label="Claude Code approval dialog">
+      <div class="permission-dialog__header">
+        <span class="permission-dialog__icon">⚠️</span>
+        <span>Agent 実行許可</span>
+      </div>
+      <p class="permission-dialog__text">エージェントが次の操作を実行しようとしています。許可しますか?</p>
+      <div class="permission-dialog__body">
+        <div class="permission-dialog__label">許可対象</div>
+        <div class="permission-dialog__action">${escapeHtml(pendingPermission.actionLabel || "ファイル編集とコマンド実行")}</div>
+      </div>
+      <div class="permission-dialog__actions">
+        <button type="button" class="permission-dialog__button permission-dialog__button--secondary" data-permission="deny">拒否</button>
+        <button type="button" class="permission-dialog__button permission-dialog__button--primary" data-permission="allow">許可</button>
+      </div>
+    </div>
+  ` : "";
 
   panel.innerHTML = `
     <div class="chat-header">
@@ -256,18 +444,76 @@ function renderChatPanel() {
         <span class="chat-header-icon">💬</span>
         <span>${selectedProject.name}</span>
       </div>
+      <span class="chat-status-badge">Local Claude</span>
     </div>
+    <div class="chat-session-switcher">
+      <div class="chat-history-dropdown">
+        <button
+          type="button"
+          class="chat-history-toggle ${isHistoryOpen ? "is-open" : ""}"
+          data-history-toggle="${selectedProject.id}"
+          aria-expanded="${isHistoryOpen}"
+        >
+          履歴
+        </button>
+        ${isHistoryOpen ? `<div class="chat-history-list" role="listbox">${historyItems}</div>` : ""}
+      </div>
+      <button type="button" class="chat-new-session-button" data-new-session="${selectedProject.id}">+ 新規セッション</button>
+    </div>
+    ${permissionDialog}
     <div class="chat-body">
       ${messageMarkup}
+      ${thinkingIndicator}
     </div>
     <div class="chat-composer">
       <textarea id="chat-input" rows="3" placeholder="${selectedProject.name} に指示を入力..."></textarea>
-      <button id="chat-send-button" type="button" data-project-id="${selectedProject.id}">送信</button>
+      <button id="chat-send-button" type="button" data-project-id="${selectedProject.id}" ${window.__agentOfficeThinkingForProject === selectedProject.id ? "disabled" : ""}>${window.__agentOfficeThinkingForProject === selectedProject.id ? "考え中" : "送信"}</button>
     </div>
   `;
 
   const textArea = document.getElementById("chat-input");
   const sendButton = document.getElementById("chat-send-button");
+  const historyToggleButton = panel.querySelector(".chat-history-toggle[data-history-toggle]");
+  const historyItemButtons = panel.querySelectorAll(".chat-history-item[data-session-id]");
+  const newSessionButton = panel.querySelector(".chat-new-session-button[data-new-session]");
+  const permissionAllowButton = panel.querySelector('[data-permission="allow"]');
+  const permissionDenyButton = panel.querySelector('[data-permission="deny"]');
+
+  if (historyToggleButton) {
+    historyToggleButton.addEventListener("click", () => {
+      historyOpenForProject = isHistoryOpen ? null : selectedProject.id;
+      renderChatPanel();
+    });
+  }
+
+  historyItemButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      historyOpenForProject = null;
+      setActiveSessionId(selectedProject.id, button.dataset.sessionId);
+    });
+  });
+
+  if (newSessionButton) {
+    newSessionButton.addEventListener("click", () => {
+      const nextSessionId = createNewSession(selectedProject.id);
+      activeSessionByProject[selectedProject.id] = nextSessionId;
+      historyOpenForProject = null;
+      renderChatPanel();
+    });
+  }
+
+  if (permissionAllowButton) {
+    permissionAllowButton.addEventListener("click", () => {
+      approvePendingPermission();
+    });
+  }
+
+  if (permissionDenyButton) {
+    permissionDenyButton.addEventListener("click", () => {
+      pendingPermission = null;
+      renderChatPanel();
+    });
+  }
 
   if (textArea) {
     textArea.addEventListener("keydown", (event) => {
@@ -321,37 +567,149 @@ function render() {
   renderChatPanel();
 }
 
-function handleTaskSubmit(projectId = null, agentId = null, inputElement = null) {
+async function callClaudeChatApi(message, history = [], sessionId = null) {
+  addDebugLog("INFO", "callClaudeChatApi called", { messageLength: message.length, historyLength: history.length, sessionId });
+  
+  try {
+    const response = await fetch("http://localhost:3001/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history, sessionId })
+    });
+
+    addDebugLog("INFO", "Response received", { status: response.status, ok: response.ok });
+    
+    const payload = await response.json();
+    addDebugLog("INFO", "Payload parsed", { ok: payload.ok, hasError: !!payload.error, responseLength: payload.response?.length });
+    
+    if (!response.ok) {
+      addDebugLog("ERROR", "Response not OK", { status: response.status, error: payload.error });
+      throw new Error(`HTTP ${response.status}: ${payload.error || response.statusText}`);
+    }
+    
+    if (!payload.ok) {
+      addDebugLog("ERROR", "Payload error", { error: payload.error });
+      throw new Error(payload.error || "Claude Code が エラーを返しました");
+    }
+
+    addDebugLog("INFO", "callClaudeChatApi success", { responseLength: payload.response?.length });
+    return payload.response || "Claude Code から応答がありませんでした。";
+  } catch (error) {
+    addDebugLog("ERROR", "callClaudeChatApi exception", { message: error.message });
+    throw error;
+  }
+}
+
+function executeApprovedTask(projectId, task, agentId) {
+  addDebugLog("INFO", "executeApprovedTask called", { projectId, taskLength: task.length, agentId });
+  
+  const targetProject = projects.find((project) => project.id === projectId);
+  const targetAgentId = agentId || targetProject?.mainAgent?.id || null;
+
+  if (!targetProject || !targetAgentId) {
+    addDebugLog("ERROR", "targetProject or targetAgentId not found", { projectId, agentId });
+    return;
+  }
+
+  const sessionId = getActiveSessionId(projectId);
+  appendProjectMessage(projectId, { role: "user", text: task, sessionId });
+  setAgentStatus(projectId, targetAgentId, "working", task);
+  autoReset(projectId, targetAgentId);
+
+  window.__agentOfficeThinkingForProject = projectId;
+  renderChatPanel();
+
+  const sendButton = document.getElementById("chat-send-button");
+  if (sendButton) {
+    sendButton.disabled = true;
+    sendButton.textContent = "考え中";
+  }
+
+  console.log("[DEBUG] About to call Claude API with sessionId:", sessionId);
+  console.log("[DEBUG] Project messages to send:", getProjectMessages(projectId, sessionId).length, "messages");
+  
+  callClaudeChatApi(task, getProjectMessages(projectId, sessionId), sessionId)
+    .then((claudeReply) => {
+      addDebugLog("INFO", "Claude reply received", { replyLength: claudeReply.length });
+      appendProjectMessage(projectId, { role: "assistant", text: claudeReply, sessionId });
+      setAgentStatus(projectId, targetAgentId, "idle", "Claude Code responded");
+      autoReset(projectId, targetAgentId);
+    })
+    .catch((error) => {
+      addDebugLog("ERROR", "Error in Claude call", { message: error.message });
+      const errorMsg = `Claude Code との接続に失敗しました: ${error.message}`;
+      appendProjectMessage(projectId, { role: "assistant", text: errorMsg, sessionId });
+      setAgentStatus(projectId, targetAgentId, "error", error.message);
+    })
+    .finally(() => {
+      addDebugLog("INFO", "Finally block: cleaning up", {});
+      pendingPermission = null;
+      delete window.__agentOfficeThinkingForProject;
+      renderChatPanel();
+      const chatInput = document.getElementById("chat-input");
+      if (chatInput) {
+        chatInput.value = "";
+      }
+      const button = document.getElementById("chat-send-button");
+      if (button) {
+        button.disabled = false;
+        button.textContent = "送信";
+      }
+    });
+}
+
+function approvePendingPermission() {
+  addDebugLog("INFO", "approvePendingPermission called", { hasPending: !!pendingPermission });
+  
+  if (!pendingPermission) {
+    addDebugLog("WARN", "No pendingPermission, returning", {});
+    return;
+  }
+
+  const { projectId, task, agentId } = pendingPermission;
+  addDebugLog("INFO", "Executing approved task", { projectId });
+  pendingPermission = null;
+  executeApprovedTask(projectId, task, agentId);
+}
+
+async function handleTaskSubmit(projectId = null, agentId = null, inputElement = null) {
+  addDebugLog("INFO", "handleTaskSubmit called", { projectId, agentId });
+  
   const selectedProject = projects.find((project) => project.id === projectId) || projects[0];
   const resolvedProjectId = selectedProject ? selectedProject.id : null;
   const resolvedInput = inputElement || document.getElementById("chat-input");
 
   if (!resolvedInput || !resolvedProjectId) {
+    addDebugLog("ERROR", "No input or projectId", { hasInput: !!resolvedInput, hasProjectId: !!resolvedProjectId });
     return;
   }
 
   const task = resolvedInput.value.trim();
   if (!task) {
+    addDebugLog("WARN", "Task is empty", {});
     resolvedInput.focus();
     return;
   }
 
   const targetProject = projects.find((project) => project.id === resolvedProjectId);
-  const targetAgentId = agentId || targetProject?.mainAgent?.id || null;
-
-  if (!targetProject || !targetAgentId) {
+  if (!targetProject) {
+    addDebugLog("ERROR", "targetProject not found", { projectId: resolvedProjectId });
     resolvedInput.focus();
     return;
   }
 
-  const currentMessages = getProjectMessages(resolvedProjectId);
-  currentMessages.push({ role: "user", text: task });
-  setAgentStatus(resolvedProjectId, targetAgentId, "working", task);
-  autoReset(resolvedProjectId, targetAgentId);
-  currentMessages.push({ role: "assistant", text: `${targetProject.name} に対して「${task}」を受け取りました。` });
+  const actionLabel = /修正|編集|変更|リファクタ|fix|update|write|delete|test|実行|run|npm|yarn|pnpm|git/i.test(task)
+    ? "ファイル編集とコマンド実行を行う"
+    : "コードの確認と提案を行う";
 
+  addDebugLog("INFO", "Setting pendingPermission", { projectId: resolvedProjectId, taskLength: task.length, actionLabel });
+  pendingPermission = {
+    projectId: resolvedProjectId,
+    task,
+    actionLabel,
+    agentId: agentId || targetProject.mainAgent?.id || null
+  };
   renderChatPanel();
-  resolvedInput.value = "";
 }
 
 async function init() {
@@ -367,6 +725,16 @@ async function init() {
     }
   ];
   projects = normalizedProjects;
+  chatMessagesByProject = loadStoredChatMessages();
+  projects.forEach((project) => {
+    if (!chatMessagesByProject[project.id]) {
+      chatMessagesByProject[project.id] = [];
+    }
+    if (!activeSessionByProject[project.id]) {
+      activeSessionByProject[project.id] = getProjectSessionIds(project.id)[0];
+    }
+  });
+  persistChatMessages();
   activeProjectId = projects.find((project) => project.visible !== false)?.id || null;
   persistProjectVisibility();
   render();
@@ -381,3 +749,62 @@ if (projectListButton) {
     renderProjectListPanel();
   });
 }
+
+// Diagnostic function for debugging
+window.__agentOfficeDiagnostics = function() {
+  const diagnostics = {
+    serverStatus: "unknown",
+    activeProject: activeProjectId,
+    activeSessions: Object.keys(activeSessionByProject),
+    pendingPermission: pendingPermission ? "exists" : "null",
+    projectsLoaded: projects.length,
+    thinkingProjectId: window.__agentOfficeThinkingForProject || "none"
+  };
+  
+  fetch("http://localhost:3001/health")
+    .then(r => r.json())
+    .then(data => {
+      diagnostics.serverStatus = data.ok ? "running" : "error";
+      console.log("[DIAGNOSTICS]", JSON.stringify(diagnostics, null, 2));
+    })
+    .catch(e => {
+      diagnostics.serverStatus = `error: ${e.message}`;
+      console.log("[DIAGNOSTICS]", JSON.stringify(diagnostics, null, 2));
+    });
+};
+
+// Show last message from each project
+window.__agentOfficeShowMessages = function() {
+  for (const [projectId, messages] of Object.entries(chatMessagesByProject)) {
+    if (Array.isArray(messages) && messages.length > 0) {
+      const lastMsg = messages[messages.length - 1];
+      console.log(`[${projectId}] ${lastMsg.role}: ${lastMsg.text?.slice(0, 100)}...`);
+    }
+  }
+};
+
+// Show debug logs captured across reloads
+window.__agentOfficeShowDebugLogs = function() {
+  console.log("=== DEBUG LOGS (last 20) ===");
+  const logsToShow = debugLogs.slice(-20);
+  logsToShow.forEach((log) => {
+    const prefix = `[${log.timestamp.slice(11, 19)}] [${log.level}]`;
+    if (log.data) {
+      console.log(prefix, log.message, log.data);
+    } else {
+      console.log(prefix, log.message);
+    }
+  });
+  console.log("=== END DEBUG LOGS ===");
+};
+
+// Clear debug logs
+window.__agentOfficeClearDebugLogs = function() {
+  debugLogs = [];
+  try {
+    sessionStorage.removeItem(debugLogsStorageKey);
+  } catch (e) {}
+  console.log("Debug logs cleared");
+};
+
+console.log("[INIT] Agent Office loaded. Run __agentOfficeShowDebugLogs() to see error logs.");
