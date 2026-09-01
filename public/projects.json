@@ -6,7 +6,7 @@
     "visible": true,
     "mainAgent": {
       "id": "agent-office-main-agent",
-      "name": "agent-officeマネージャー",
+      "name": "agent-office Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -56,7 +56,7 @@
     "visible": true,
     "mainAgent": {
       "id": "agents-demo-main-agent",
-      "name": "agents-demoマネージャー",
+      "name": "agents-demo Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -78,7 +78,7 @@
     "visible": true,
     "mainAgent": {
       "id": "antigravity-demo-main-agent",
-      "name": "antigravity-demoマネージャー",
+      "name": "antigravity-demo Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -100,7 +100,7 @@
     "visible": true,
     "mainAgent": {
       "id": "dash-main-agent",
-      "name": "dashマネージャー",
+      "name": "dash Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -150,7 +150,7 @@
     "visible": true,
     "mainAgent": {
       "id": "docker-demo-main-agent",
-      "name": "docker-demoマネージャー",
+      "name": "docker-demo Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -172,7 +172,7 @@
     "visible": true,
     "mainAgent": {
       "id": "fastapi-demo-main-agent",
-      "name": "fastapi-demoマネージャー",
+      "name": "fastapi-demo Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -194,7 +194,7 @@
     "visible": true,
     "mainAgent": {
       "id": "fx-demo-main-agent",
-      "name": "fx-demoマネージャー",
+      "name": "fx-demo Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -216,7 +216,7 @@
     "visible": true,
     "mainAgent": {
       "id": "kabuport-main-agent",
-      "name": "kabuportマネージャー",
+      "name": "kabuport Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -245,7 +245,7 @@
     "visible": true,
     "mainAgent": {
       "id": "niwabon-main-agent",
-      "name": "niwabonマネージャー",
+      "name": "niwabon Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -267,7 +267,7 @@
     "visible": true,
     "mainAgent": {
       "id": "sodateji-main-agent",
-      "name": "sodatejiマネージャー",
+      "name": "sodateji Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -289,7 +289,7 @@
     "visible": true,
     "mainAgent": {
       "id": "stock-agent-system-main-agent",
-      "name": "stock-agent-systemマネージャー",
+      "name": "stock-agent-system Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -311,7 +311,7 @@
     "visible": true,
     "mainAgent": {
       "id": "video-demo-main-agent",
-      "name": "video-demoマネージャー",
+      "name": "video-demo Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -333,7 +333,7 @@
     "visible": true,
     "mainAgent": {
       "id": "project-3qtf-main-agent",
-      "name": "ダッシュボードアプリマネージャー",
+      "name": "ダッシュボードアプリ Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"
@@ -355,7 +355,7 @@
     "visible": true,
     "mainAgent": {
       "id": "project-4x4n-main-agent",
-      "name": "結婚式プロフィールムービーマネージャー",
+      "name": "結婚式プロフィールムービー Main Agent",
       "role": "Main Agent",
       "status": "idle",
       "activity": "Ready for task"

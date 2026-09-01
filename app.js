@@ -112,25 +112,14 @@ function setAgentStatus(projectId, agentId, nextStatus, activity) {
   const agent = getAgentById(project, agentId);
   if (!agent) return;
 
+  const isSubAgent = project.mainAgent?.id !== agentId;
+  if (isSubAgent) {
+    addDebugLog("INFO", "setAgentStatus (sub-agent)", { projectId, agentId, prevStatus: agent.status, nextStatus });
+  }
+
   agent.status = nextStatus;
   agent.activity = activity;
   render();
-}
-
-function autoReset(projectId, agentId) {
-  const project = projects.find((item) => item.id === projectId);
-  if (!project) return;
-
-  const agent = getAgentById(project, agentId);
-  if (!agent) return;
-
-  setTimeout(() => {
-    if (agent.status === "working" || agent.status === "waiting") {
-      agent.status = "idle";
-      agent.activity = "Ready for the next task";
-      render();
-    }
-  }, 4200);
 }
 
 function chooseAgentForTask(taskText) {
@@ -567,14 +556,14 @@ function render() {
   renderChatPanel();
 }
 
-async function callClaudeChatApi(message, history = [], sessionId = null) {
-  addDebugLog("INFO", "callClaudeChatApi called", { messageLength: message.length, historyLength: history.length, sessionId });
-  
+async function callClaudeChatApi(message, history = [], sessionId = null, projectId = null) {
+  addDebugLog("INFO", "callClaudeChatApi called", { messageLength: message.length, historyLength: history.length, sessionId, projectId });
+
   try {
     const response = await fetch("http://localhost:3001/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history, sessionId })
+      body: JSON.stringify({ message, history, sessionId, projectId })
     });
 
     addDebugLog("INFO", "Response received", { status: response.status, ok: response.ok });
@@ -600,6 +589,33 @@ async function callClaudeChatApi(message, history = [], sessionId = null) {
   }
 }
 
+function subscribeToSubAgentEvents() {
+  if (typeof EventSource === "undefined") {
+    return;
+  }
+
+  try {
+    const source = new EventSource("http://localhost:3001/api/events");
+    source.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (!payload || !payload.projectId || !payload.subAgentId) {
+          return;
+        }
+
+        addDebugLog("INFO", "SSE sub-agent event received", payload);
+
+        const activity = payload.status === "working" ? "Sub agent running" : "Sub agent finished";
+        setAgentStatus(payload.projectId, payload.subAgentId, payload.status, activity);
+      } catch (error) {
+        addDebugLog("ERROR", "Failed to parse sub agent event", { message: error.message });
+      }
+    };
+  } catch (error) {
+    addDebugLog("ERROR", "Failed to subscribe to sub agent events", { message: error.message });
+  }
+}
+
 function executeApprovedTask(projectId, task, agentId) {
   addDebugLog("INFO", "executeApprovedTask called", { projectId, taskLength: task.length, agentId });
   
@@ -614,7 +630,6 @@ function executeApprovedTask(projectId, task, agentId) {
   const sessionId = getActiveSessionId(projectId);
   appendProjectMessage(projectId, { role: "user", text: task, sessionId });
   setAgentStatus(projectId, targetAgentId, "working", task);
-  autoReset(projectId, targetAgentId);
 
   window.__agentOfficeThinkingForProject = projectId;
   renderChatPanel();
@@ -628,12 +643,11 @@ function executeApprovedTask(projectId, task, agentId) {
   console.log("[DEBUG] About to call Claude API with sessionId:", sessionId);
   console.log("[DEBUG] Project messages to send:", getProjectMessages(projectId, sessionId).length, "messages");
   
-  callClaudeChatApi(task, getProjectMessages(projectId, sessionId), sessionId)
+  callClaudeChatApi(task, getProjectMessages(projectId, sessionId), sessionId, projectId)
     .then((claudeReply) => {
       addDebugLog("INFO", "Claude reply received", { replyLength: claudeReply.length });
       appendProjectMessage(projectId, { role: "assistant", text: claudeReply, sessionId });
       setAgentStatus(projectId, targetAgentId, "idle", "Claude Code responded");
-      autoReset(projectId, targetAgentId);
     })
     .catch((error) => {
       addDebugLog("ERROR", "Error in Claude call", { message: error.message });
@@ -741,6 +755,7 @@ async function init() {
 }
 
 init();
+subscribeToSubAgentEvents();
 
 const projectListButton = document.getElementById("project-list-button");
 if (projectListButton) {
