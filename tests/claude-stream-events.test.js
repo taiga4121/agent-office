@@ -4,9 +4,14 @@ const { EventEmitter } = require('node:events');
 const childProcess = require('node:child_process');
 
 // runClaude は `claude --output-format stream-json --verbose` の標準出力を1行1JSON(NDJSON)として
-// 逐次パースし、Task tool の tool_use / tool_result を検知してサブエージェント開始・終了イベントを
-// (server.js内部の)subAgentEventsへemitする。subAgentEvents自体はエクスポートされていないため、
-// EventEmitter.prototype.emit を一時的にラップして 'event' という名前のemit呼び出しだけを観測する。
+// 逐次パースし、system イベント(task_started/task_notification)を検知してサブエージェント開始・終了
+// イベントを (server.js内部の)subAgentEventsへemitする。
+// (以前は assistant イベント内の tool_use(Task/Agent) と、対応する user イベント内の tool_result で
+// 検知していたが、Agentツール呼び出しがバックグラウンド実行される場合、tool_result がサブエージェントの
+// 実際の完了を待たずに返ってくるため、表示と実際の作業時間が同期しない問題があった。実際のライフサイクルは
+// system タイプの task_started/task_notification イベントで正確に示されるため、こちらに一本化されている。)
+// subAgentEvents自体はエクスポートされていないため、EventEmitter.prototype.emit を一時的にラップして
+// 'event' という名前のemit呼び出しだけを観測する。
 function withSubAgentEventSpy(t, fn) {
   const emitted = [];
   const originalEmit = EventEmitter.prototype.emit;
@@ -42,17 +47,19 @@ function requireFreshServer() {
   return require(serverPath);
 }
 
+function taskStartedEvent(taskId, subagentType) {
+  return { type: 'system', subtype: 'task_started', task_id: taskId, subagent_type: subagentType };
+}
+
+function taskNotificationEvent(taskId, status = 'completed') {
+  return { type: 'system', subtype: 'task_notification', task_id: taskId, status };
+}
+
+// 旧方式(tool_use/tool_result)のイベント形。新方式では無視されるべきことの回帰確認にのみ使う。
 function taskToolUseEvent(toolUseId, subagentType) {
   return {
     type: 'assistant',
     message: { content: [{ type: 'tool_use', id: toolUseId, name: 'Task', input: { subagent_type: subagentType } }] }
-  };
-}
-
-function agentToolUseEvent(toolUseId, subagentType) {
-  return {
-    type: 'assistant',
-    message: { content: [{ type: 'tool_use', id: toolUseId, name: 'Agent', input: { subagent_type: subagentType } }] }
   };
 }
 
@@ -67,7 +74,7 @@ function resultEvent(result) {
   return { type: 'result', result };
 }
 
-test('runClaude: Task tool_useの検知でworkingイベント、対応するtool_resultでidleイベントが発行される(正常系)', async (t) => {
+test('runClaude: task_startedの検知でworkingイベント、対応するtask_notification(completed)でidleイベントが発行される(正常系)', async (t) => {
   await withSubAgentEventSpy(t, async (emitted) => {
     const fakeChild = createFakeChild();
     t.mock.method(childProcess, 'spawn', () => fakeChild);
@@ -75,8 +82,8 @@ test('runClaude: Task tool_useの検知でworkingイベント、対応するtool
 
     const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
 
-    writeLine(fakeChild, taskToolUseEvent('tool-1', 'code-reviewer'));
-    writeLine(fakeChild, toolResultEvent('tool-1'));
+    writeLine(fakeChild, taskStartedEvent('task-1', 'code-reviewer'));
+    writeLine(fakeChild, taskNotificationEvent('task-1', 'completed'));
     writeLine(fakeChild, resultEvent('最終応答です'));
     fakeChild.emit('close', 0);
 
@@ -90,7 +97,7 @@ test('runClaude: Task tool_useの検知でworkingイベント、対応するtool
   });
 });
 
-test('runClaude: Agent tool_useの検知でworkingイベント、対応するtool_resultでidleイベントが発行される(正常系)', async (t) => {
+test('runClaude: 複数のサブエージェントが異なるtask_idで同時にtask_startedしても、それぞれ独立してworking/idleが管理される(正常系)', async (t) => {
   await withSubAgentEventSpy(t, async (emitted) => {
     const fakeChild = createFakeChild();
     t.mock.method(childProcess, 'spawn', () => fakeChild);
@@ -98,33 +105,10 @@ test('runClaude: Agent tool_useの検知でworkingイベント、対応するtoo
 
     const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
 
-    writeLine(fakeChild, agentToolUseEvent('tool-1', 'code-reviewer'));
-    writeLine(fakeChild, toolResultEvent('tool-1'));
-    writeLine(fakeChild, resultEvent('最終応答です'));
-    fakeChild.emit('close', 0);
-
-    const response = await promise;
-
-    assert.equal(response, '最終応答です');
-    assert.deepEqual(emitted, [
-      { projectId: 'proj-a', subAgentId: 'code-reviewer', status: 'working' },
-      { projectId: 'proj-a', subAgentId: 'code-reviewer', status: 'idle' }
-    ]);
-  });
-});
-
-test('runClaude: TaskとAgentが混在してもそれぞれtool_use_idごとに正しく対応付ける(境界値)', async (t) => {
-  await withSubAgentEventSpy(t, async (emitted) => {
-    const fakeChild = createFakeChild();
-    t.mock.method(childProcess, 'spawn', () => fakeChild);
-    const { runClaude } = requireFreshServer();
-
-    const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
-
-    writeLine(fakeChild, taskToolUseEvent('tool-1', 'agent-a'));
-    writeLine(fakeChild, agentToolUseEvent('tool-2', 'agent-b'));
-    writeLine(fakeChild, toolResultEvent('tool-2'));
-    writeLine(fakeChild, toolResultEvent('tool-1'));
+    writeLine(fakeChild, taskStartedEvent('task-1', 'agent-a'));
+    writeLine(fakeChild, taskStartedEvent('task-2', 'agent-b'));
+    writeLine(fakeChild, taskNotificationEvent('task-2', 'completed'));
+    writeLine(fakeChild, taskNotificationEvent('task-1', 'completed'));
     writeLine(fakeChild, resultEvent('応答'));
     fakeChild.emit('close', 0);
 
@@ -139,7 +123,7 @@ test('runClaude: TaskとAgentが混在してもそれぞれtool_use_idごとに�
   });
 });
 
-test('runClaude: Agent tool_useでもsubagent_typeが無い場合はサブエージェントイベントを発行しない(境界値)', async (t) => {
+test('runClaude: 複数サブエージェントのうち一部だけtask_notificationが来た場合、通知が来た方だけ先にidleになり、来なかった方はcloseで強制的にidleへ戻る(境界値)', async (t) => {
   await withSubAgentEventSpy(t, async (emitted) => {
     const fakeChild = createFakeChild();
     t.mock.method(childProcess, 'spawn', () => fakeChild);
@@ -147,10 +131,102 @@ test('runClaude: Agent tool_useでもsubagent_typeが無い場合はサブエー
 
     const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
 
-    writeLine(fakeChild, {
-      type: 'assistant',
-      message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'Agent', input: {} }] }
-    });
+    writeLine(fakeChild, taskStartedEvent('task-1', 'agent-a'));
+    writeLine(fakeChild, taskStartedEvent('task-2', 'agent-b'));
+    writeLine(fakeChild, taskNotificationEvent('task-2', 'completed'));
+
+    assert.deepEqual(emitted, [
+      { projectId: 'proj-a', subAgentId: 'agent-a', status: 'working' },
+      { projectId: 'proj-a', subAgentId: 'agent-b', status: 'working' },
+      { projectId: 'proj-a', subAgentId: 'agent-b', status: 'idle' }
+    ], 'task-1に対応する通知が来る前は、agent-aはworkingのまま');
+
+    writeLine(fakeChild, resultEvent('応答'));
+    fakeChild.emit('close', 0);
+    await promise;
+
+    assert.deepEqual(emitted, [
+      { projectId: 'proj-a', subAgentId: 'agent-a', status: 'working' },
+      { projectId: 'proj-a', subAgentId: 'agent-b', status: 'working' },
+      { projectId: 'proj-a', subAgentId: 'agent-b', status: 'idle' },
+      { projectId: 'proj-a', subAgentId: 'agent-a', status: 'idle' }
+    ], 'closeで残っていたagent-aも強制的にidleへ戻る');
+  });
+});
+
+test('runClaude: task_notificationのtask_idがtask_startedのtask_idと一致しない場合はidleイベントが発行されない(異常系)', async (t) => {
+  await withSubAgentEventSpy(t, async (emitted) => {
+    const fakeChild = createFakeChild();
+    t.mock.method(childProcess, 'spawn', () => fakeChild);
+    const { runClaude } = requireFreshServer();
+
+    const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
+
+    writeLine(fakeChild, taskStartedEvent('task-1', 'agent-a'));
+    writeLine(fakeChild, taskNotificationEvent('task-999', 'completed'));
+
+    assert.deepEqual(
+      emitted,
+      [{ projectId: 'proj-a', subAgentId: 'agent-a', status: 'working' }],
+      'task_idが一致しない通知ではidleは発行されない'
+    );
+
+    writeLine(fakeChild, resultEvent('応答'));
+    fakeChild.emit('close', 0);
+    await promise;
+
+    assert.deepEqual(
+      emitted,
+      [
+        { projectId: 'proj-a', subAgentId: 'agent-a', status: 'working' },
+        { projectId: 'proj-a', subAgentId: 'agent-a', status: 'idle' }
+      ],
+      '最終的なidleはcloseの強制リセットによるものであり、不一致の通知によるものではない'
+    );
+  });
+});
+
+test('runClaude: task_notificationのstatusがcompleted以外(failed)の場合はidleイベントが発行されない(異常系)', async (t) => {
+  await withSubAgentEventSpy(t, async (emitted) => {
+    const fakeChild = createFakeChild();
+    t.mock.method(childProcess, 'spawn', () => fakeChild);
+    const { runClaude } = requireFreshServer();
+
+    const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
+
+    writeLine(fakeChild, taskStartedEvent('task-1', 'agent-a'));
+    writeLine(fakeChild, taskNotificationEvent('task-1', 'failed'));
+
+    assert.deepEqual(
+      emitted,
+      [{ projectId: 'proj-a', subAgentId: 'agent-a', status: 'working' }],
+      'statusが completed でない通知ではidleは発行されない'
+    );
+
+    writeLine(fakeChild, resultEvent('応答'));
+    fakeChild.emit('close', 0);
+    await promise;
+
+    assert.deepEqual(
+      emitted,
+      [
+        { projectId: 'proj-a', subAgentId: 'agent-a', status: 'working' },
+        { projectId: 'proj-a', subAgentId: 'agent-a', status: 'idle' }
+      ],
+      '最終的なidleはcloseの強制リセットによるものである'
+    );
+  });
+});
+
+test('runClaude: task_startedにtask_idが無い場合はworkingイベントを発行しない(境界値)', async (t) => {
+  await withSubAgentEventSpy(t, async (emitted) => {
+    const fakeChild = createFakeChild();
+    t.mock.method(childProcess, 'spawn', () => fakeChild);
+    const { runClaude } = requireFreshServer();
+
+    const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
+
+    writeLine(fakeChild, { type: 'system', subtype: 'task_started', subagent_type: 'agent-a' });
     writeLine(fakeChild, resultEvent('応答'));
     fakeChild.emit('close', 0);
 
@@ -160,7 +236,7 @@ test('runClaude: Agent tool_useでもsubagent_typeが無い場合はサブエー
   });
 });
 
-test('runClaude: Task以外のtool_useではサブエージェントイベントを発行しない(異常系)', async (t) => {
+test('runClaude: task_startedにsubagent_typeが無い場合はworkingイベントを発行しない(境界値)', async (t) => {
   await withSubAgentEventSpy(t, async (emitted) => {
     const fakeChild = createFakeChild();
     t.mock.method(childProcess, 'spawn', () => fakeChild);
@@ -168,31 +244,7 @@ test('runClaude: Task以外のtool_useではサブエージェントイベント
 
     const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
 
-    writeLine(fakeChild, {
-      type: 'assistant',
-      message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'ls' } }] }
-    });
-    writeLine(fakeChild, resultEvent('応答'));
-    fakeChild.emit('close', 0);
-
-    await promise;
-
-    assert.deepEqual(emitted, []);
-  });
-});
-
-test('runClaude: Task tool_useでもsubagent_typeが無い場合はサブエージェントイベントを発行しない(異常系)', async (t) => {
-  await withSubAgentEventSpy(t, async (emitted) => {
-    const fakeChild = createFakeChild();
-    t.mock.method(childProcess, 'spawn', () => fakeChild);
-    const { runClaude } = requireFreshServer();
-
-    const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
-
-    writeLine(fakeChild, {
-      type: 'assistant',
-      message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'Task', input: {} }] }
-    });
+    writeLine(fakeChild, { type: 'system', subtype: 'task_started', task_id: 'task-1' });
     writeLine(fakeChild, resultEvent('応答'));
     fakeChild.emit('close', 0);
 
@@ -210,10 +262,10 @@ test('runClaude: 不正なJSON行が混ざっていてもクラッシュせず�
 
     const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
 
-    writeLine(fakeChild, taskToolUseEvent('tool-1', 'researcher'));
+    writeLine(fakeChild, taskStartedEvent('task-1', 'researcher'));
     fakeChild.stdout.emit('data', Buffer.from('{this is not valid json\n'));
     fakeChild.stdout.emit('data', Buffer.from('\n'));
-    writeLine(fakeChild, toolResultEvent('tool-1'));
+    writeLine(fakeChild, taskNotificationEvent('task-1', 'completed'));
     writeLine(fakeChild, resultEvent('壊れた行があっても応答は返る'));
     fakeChild.emit('close', 0);
 
@@ -227,7 +279,7 @@ test('runClaude: 不正なJSON行が混ざっていてもクラッシュせず�
   });
 });
 
-test('runClaude: 複数のサブエージェント呼び出しをtool_use_idごとに正しく対応付ける(境界値)', async (t) => {
+test('runClaude: task_notificationが来ないままプロセスが終了した場合、closeで残っているサブエージェントをidleに戻す(異常系)', async (t) => {
   await withSubAgentEventSpy(t, async (emitted) => {
     const fakeChild = createFakeChild();
     t.mock.method(childProcess, 'spawn', () => fakeChild);
@@ -235,33 +287,7 @@ test('runClaude: 複数のサブエージェント呼び出しをtool_use_idご�
 
     const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
 
-    writeLine(fakeChild, taskToolUseEvent('tool-1', 'agent-a'));
-    writeLine(fakeChild, taskToolUseEvent('tool-2', 'agent-b'));
-    writeLine(fakeChild, toolResultEvent('tool-2'));
-    writeLine(fakeChild, toolResultEvent('tool-1'));
-    writeLine(fakeChild, resultEvent('応答'));
-    fakeChild.emit('close', 0);
-
-    await promise;
-
-    assert.deepEqual(emitted, [
-      { projectId: 'proj-a', subAgentId: 'agent-a', status: 'working' },
-      { projectId: 'proj-a', subAgentId: 'agent-b', status: 'working' },
-      { projectId: 'proj-a', subAgentId: 'agent-b', status: 'idle' },
-      { projectId: 'proj-a', subAgentId: 'agent-a', status: 'idle' }
-    ]);
-  });
-});
-
-test('runClaude: tool_resultが来ないままプロセスが終了した場合、closeで残っているサブエージェントをidleに戻す(異常系)', async (t) => {
-  await withSubAgentEventSpy(t, async (emitted) => {
-    const fakeChild = createFakeChild();
-    t.mock.method(childProcess, 'spawn', () => fakeChild);
-    const { runClaude } = requireFreshServer();
-
-    const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
-
-    writeLine(fakeChild, taskToolUseEvent('tool-1', 'stuck-agent'));
+    writeLine(fakeChild, taskStartedEvent('task-1', 'stuck-agent'));
     writeLine(fakeChild, resultEvent('応答'));
     fakeChild.emit('close', 0);
 
@@ -274,7 +300,7 @@ test('runClaude: tool_resultが来ないままプロセスが終了した場合�
   });
 });
 
-test('runClaude: projectIdが未指定の場合はTaskを検知してもサブエージェントイベントを発行しない(境界値)', async (t) => {
+test('runClaude: projectIdが未指定の場合はtask_startedを検知してもサブエージェントイベントを発行しない(境界値)', async (t) => {
   await withSubAgentEventSpy(t, async (emitted) => {
     const fakeChild = createFakeChild();
     t.mock.method(childProcess, 'spawn', () => fakeChild);
@@ -282,8 +308,8 @@ test('runClaude: projectIdが未指定の場合はTaskを検知してもサブ�
 
     const promise = runClaude('プロンプト', '/tmp/workspace', null);
 
-    writeLine(fakeChild, taskToolUseEvent('tool-1', 'agent-a'));
-    writeLine(fakeChild, toolResultEvent('tool-1'));
+    writeLine(fakeChild, taskStartedEvent('task-1', 'agent-a'));
+    writeLine(fakeChild, taskNotificationEvent('task-1', 'completed'));
     writeLine(fakeChild, resultEvent('応答'));
     fakeChild.emit('close', 0);
 
@@ -291,6 +317,25 @@ test('runClaude: projectIdが未指定の場合はTaskを検知してもサブ�
 
     assert.equal(response, '応答');
     assert.deepEqual(emitted, []);
+  });
+});
+
+test('runClaude: assistant/tool_use(旧Task/Agentツール検知方式)のイベントが来てもworkingイベントは発行されない(回帰)', async (t) => {
+  await withSubAgentEventSpy(t, async (emitted) => {
+    const fakeChild = createFakeChild();
+    t.mock.method(childProcess, 'spawn', () => fakeChild);
+    const { runClaude } = requireFreshServer();
+
+    const promise = runClaude('プロンプト', '/tmp/workspace', 'proj-a');
+
+    writeLine(fakeChild, taskToolUseEvent('tool-1', 'code-reviewer'));
+    writeLine(fakeChild, toolResultEvent('tool-1'));
+    writeLine(fakeChild, resultEvent('応答'));
+    fakeChild.emit('close', 0);
+
+    await promise;
+
+    assert.deepEqual(emitted, [], 'tool_use/tool_resultベースの検知は廃止されているため、いかなるイベントも発行されない');
   });
 });
 

@@ -112,6 +112,11 @@ function setAgentStatus(projectId, agentId, nextStatus, activity) {
   const agent = getAgentById(project, agentId);
   if (!agent) return;
 
+  const isSubAgent = project.mainAgent?.id !== agentId;
+  if (isSubAgent) {
+    addDebugLog("INFO", "setAgentStatus (sub-agent)", { projectId, agentId, prevStatus: agent.status, nextStatus });
+  }
+
   agent.status = nextStatus;
   agent.activity = activity;
   render();
@@ -597,6 +602,8 @@ function subscribeToSubAgentEvents() {
         if (!payload || !payload.projectId || !payload.subAgentId) {
           return;
         }
+
+        addDebugLog("INFO", "SSE sub-agent event received", payload);
 
         const activity = payload.status === "working" ? "Sub agent running" : "Sub agent finished";
         setAgentStatus(payload.projectId, payload.subAgentId, payload.status, activity);

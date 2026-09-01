@@ -131,27 +131,25 @@ function runClaude(prompt, workspace = process.cwd(), projectId = null) {
 
     function emitSubAgentEvent(subAgentId, status) {
       if (!projectId || !subAgentId) return;
+      console.log(`[${new Date().toISOString()}] SSE emit sub-agent event: projectId=${projectId}, subAgentId=${subAgentId}, status=${status}`);
       subAgentEvents.emit('event', { projectId, subAgentId, status });
     }
 
     function handleStreamEvent(event) {
-      if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
-        for (const block of event.message.content) {
-          if (block.type === 'tool_use' && (block.name === 'Task' || block.name === 'Agent') && block.input?.subagent_type) {
-            pendingSubAgentCalls.set(block.id, block.input.subagent_type);
-            emitSubAgentEvent(block.input.subagent_type, 'working');
-          }
-        }
+      // サブエージェントの実際のライフサイクルは system イベント(task_started/task_notification)で通知される。
+      // tool_use/tool_result はツール呼び出しの受付確認に過ぎず、is_backgrounded なサブエージェント呼び出しでは
+      // 実際の完了より先に返ってきてしまうため使用しない。
+      if (event.type === 'system' && event.subtype === 'task_started' && event.task_id && event.subagent_type) {
+        console.log(`[${new Date().toISOString()}] stream-json task_started: task_id=${event.task_id}, subagent_type=${event.subagent_type}, is_backgrounded=${event.is_backgrounded}`);
+        pendingSubAgentCalls.set(event.task_id, event.subagent_type);
+        emitSubAgentEvent(event.subagent_type, 'working');
       }
 
-      if (event.type === 'user' && Array.isArray(event.message?.content)) {
-        for (const block of event.message.content) {
-          if (block.type === 'tool_result' && pendingSubAgentCalls.has(block.tool_use_id)) {
-            const subAgentId = pendingSubAgentCalls.get(block.tool_use_id);
-            pendingSubAgentCalls.delete(block.tool_use_id);
-            emitSubAgentEvent(subAgentId, 'idle');
-          }
-        }
+      if (event.type === 'system' && event.subtype === 'task_notification' && event.status === 'completed' && pendingSubAgentCalls.has(event.task_id)) {
+        console.log(`[${new Date().toISOString()}] stream-json task_notification completed: task_id=${event.task_id}`);
+        const subAgentId = pendingSubAgentCalls.get(event.task_id);
+        pendingSubAgentCalls.delete(event.task_id);
+        emitSubAgentEvent(subAgentId, 'idle');
       }
 
       if (event.type === 'result' && typeof event.result === 'string') {
